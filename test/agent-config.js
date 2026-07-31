@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import {
   appendAgentUpdateParam,
   buildAgentConfig,
@@ -116,5 +117,23 @@ assert.equal(
   buildAgentConfig({ custom_bd: 'https://example.com/generate_204' }).custom_bd,
   'https://example.com/generate_204'
 );
+
+const agentScripts = [
+  'public/install.sh',
+  'public/install-alpine.sh',
+  'public/install-mac.sh',
+  'public/install-openwrt.sh',
+  'public/install-synology.sh',
+  'public/cf-server-monitor.ps1'
+];
+
+for (const scriptPath of agentScripts) {
+  const script = await readFile(new URL(`../${scriptPath}`, import.meta.url), 'utf8');
+  assert.match(
+    script,
+    /X-Agent-Config-Schema(?:'|"|\s*=|:\s*)[^\r\n]*4/,
+    `${scriptPath} must report agent config schema 4`
+  );
+}
 
 console.log('agent config tests passed');

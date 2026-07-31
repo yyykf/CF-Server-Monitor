@@ -1708,7 +1708,7 @@ function Start-TimerCollectLoop {
                 $json = $payload | ConvertTo-Json -Depth 10 -Compress
                 try {
                     $requestHeaders = @{
-                        'X-Agent-Config-Schema' = '3'
+                        'X-Agent-Config-Schema' = '4'
                         'X-Agent-Version' = $AGENT_VERSION
                         'X-Agent-Config-Md5' = if ($script:cs_configMd5) { $script:cs_configMd5 } else { 'none' }
                     }

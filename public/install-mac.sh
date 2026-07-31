@@ -1411,7 +1411,7 @@ EOF
         REPORT_HEADER_FILE="${TEMP_DIR}/.cf_probe_headers.$$"
         REPORT_HTTP_CODE=$(curl -skS -D "$REPORT_HEADER_FILE" -o "$REPORT_RESPONSE_FILE" -w "%{http_code}" -X POST \
             -H "Content-Type: application/json" \
-            -H "X-Agent-Config-Schema: 3" \
+            -H "X-Agent-Config-Schema: 4" \
             -H "X-Agent-Version: ${AGENT_VERSION}" \
             -H "X-Agent-Config-Md5: ${CONFIG_MD5:-none}" \
             -d "${PAYLOAD}" -m 8 --connect-timeout 3 "${WORKER_URL}" 2>/dev/null || echo 000)
