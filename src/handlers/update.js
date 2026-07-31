@@ -5,6 +5,8 @@ import { createErrorResponse, createUnauthorizedResponse, createNotFoundResponse
 import { ensureServerOptimization } from '../database/indexOptimization.js';
 import { AGENT_VERSION, loadSiteSettings } from '../utils/settings.js';
 import { cacheLatestReportUpdate } from '../utils/latestReportCache.js';
+import { checkToken } from '../middleware/auth.js';
+import { secureCompare } from '../utils/security.js';
 import {
   AGENT_CONFIG_MD5_HEADER,
   AGENT_CONFIG_SCHEMA_HEADER,
@@ -202,7 +204,7 @@ export async function handleUpdate(request, env, ctx) {
     const data = await request.json();
     const { id, secret } = data;
 
-    if (secret !== env.API_SECRET) {
+    if (!await secureCompare(secret, env.API_SECRET)) {
       return createUnauthorizedResponse('Invalid secret');
     }
 
@@ -358,6 +360,12 @@ export async function handleWebSocketUpgrade(request, env) {
     });
   }
 
+  const token = extractWebSocketToken(request);
+  const settings = await loadSiteSettings(env.DB);
+  if (!await checkToken(token, env, settings)) {
+    return createUnauthorizedResponse('WebSocket authentication required');
+  }
+
   const url = new URL(request.url);
   const qs = url.search || '';
   try {
@@ -366,6 +374,7 @@ export async function handleWebSocketUpgrade(request, env) {
     const realOrigin = new URL(request.url).origin;
     const headers = new Headers(request.headers);
     headers.set('X-Real-Origin', realOrigin);
+    headers.set('Sec-WebSocket-Protocol', 'cfsm');
     return await stub.fetch(new Request(`http://internal/ws${qs}`, {
       method: request.method,
       headers,
@@ -379,4 +388,16 @@ export async function handleWebSocketUpgrade(request, env) {
       headers: { 'Content-Type': 'application/json' }
     });
   }
+}
+
+export function extractWebSocketToken(request) {
+  const protocols = (request.headers.get('Sec-WebSocket-Protocol') || '')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean);
+  if (!protocols.includes('cfsm')) return '';
+
+  const authProtocol = protocols.find(value => value.startsWith('cfsm.jwt.'));
+  const token = authProtocol ? authProtocol.slice('cfsm.jwt.'.length) : '';
+  return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token) ? token : '';
 }

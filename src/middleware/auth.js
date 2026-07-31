@@ -1,6 +1,7 @@
 const ALGORITHM = { name: 'HMAC', hash: 'SHA-256' };
 import { verifyPasswordHash } from '../utils/common.js';
 import { isValidJwtSecret } from '../utils/settings.js';
+import { secureCompare } from '../utils/security.js';
 
 async function generateKeyFromSecret(secret) {
   const encoder = new TextEncoder();
@@ -8,10 +9,22 @@ async function generateKeyFromSecret(secret) {
   return await crypto.subtle.importKey('raw', keyData, ALGORITHM, false, ['sign', 'verify']);
 }
 
+function encodeBase64Url(value) {
+  const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : new Uint8Array(value);
+  const base64 = btoa(String.fromCharCode(...bytes));
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function decodeBase64Url(value) {
+  const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
+  return atob(padded);
+}
+
 async function signJwt(payload, secret) {
   const header = { alg: 'HS256', typ: 'JWT' };
-  const encodedHeader = btoa(JSON.stringify(header)).replace(/=/g, '');
-  const encodedPayload = btoa(JSON.stringify(payload)).replace(/=/g, '');
+  const encodedHeader = encodeBase64Url(JSON.stringify(header));
+  const encodedPayload = encodeBase64Url(JSON.stringify(payload));
   
   const data = `${encodedHeader}.${encodedPayload}`;
   const key = await generateKeyFromSecret(secret);
@@ -20,7 +33,7 @@ async function signJwt(payload, secret) {
   const dataBytes = encoder.encode(data);
   const signature = await crypto.subtle.sign(ALGORITHM, key, dataBytes);
   
-  const encodedSignature = btoa(String.fromCharCode(...new Uint8Array(signature))).replace(/=/g, '');
+  const encodedSignature = encodeBase64Url(signature);
   
   return `${encodedHeader}.${encodedPayload}.${encodedSignature}`;
 }
@@ -40,7 +53,7 @@ async function verifyJwt(token, secret) {
     const encoder = new TextEncoder();
     const dataBytes = encoder.encode(data);
     
-    const signatureBytes = new Uint8Array(atob(encodedSignature).split('').map(c => c.charCodeAt(0)));
+    const signatureBytes = new Uint8Array(decodeBase64Url(encodedSignature).split('').map(c => c.charCodeAt(0)));
     
     const isValid = await crypto.subtle.verify(ALGORITHM, key, signatureBytes, dataBytes);
     
@@ -48,7 +61,7 @@ async function verifyJwt(token, secret) {
       return null;
     }
     
-    const payload = JSON.parse(atob(encodedPayload));
+    const payload = JSON.parse(decodeBase64Url(encodedPayload));
     
     if (payload.exp && Date.now() > payload.exp * 1000) {
       return null;
@@ -95,8 +108,13 @@ export async function checkAuth(request, env, sys) {
     return false;
   }
 
-  const secret = getJwtSecret(env, sys);
+  return checkToken(token, env, sys);
+}
 
+export async function checkToken(token, env, sys) {
+  if (typeof token !== 'string' || token.length === 0) return false;
+
+  const secret = getJwtSecret(env, sys);
   try {
     const payload = await verifyJwt(token, secret);
     return payload !== null;
@@ -158,7 +176,7 @@ export async function validateCredentials(request, env, sys) {
       typeof env.API_SECRET === 'string' &&
       env.API_SECRET.length > 0 &&
       username === validUsername &&
-      password === env.API_SECRET
+      await secureCompare(password, env.API_SECRET)
     );
     return { valid, needsPasswordUpgrade: false };
   } catch (e) {

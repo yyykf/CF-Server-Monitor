@@ -1,7 +1,7 @@
 # Cloudflare Workers 配置，线上已由deploy.yml接管，这里仅供本地测试
-name = "cf-server-monitor"
+name = "server-monitor-pro"
 main = "src/index.js"
-compatibility_date = "2024-12-01"
+compatibility_date = "2026-07-31"
 compatibility_flags = ["nodejs_compat"]
 
 keep_vars = true

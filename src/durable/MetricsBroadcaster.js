@@ -284,6 +284,12 @@ export class MetricsBroadcaster {
       }
 
       const responseHeaders = new Headers();
+      const protocols = (request.headers.get('Sec-WebSocket-Protocol') || '')
+        .split(',')
+        .map(value => value.trim());
+      if (protocols.includes('cfsm')) {
+        responseHeaders.set('Sec-WebSocket-Protocol', 'cfsm');
+      }
       if (origin && allowedOrigins.length > 0) {
         responseHeaders.set('Access-Control-Allow-Origin', origin);
         responseHeaders.set('Access-Control-Allow-Credentials', 'true');

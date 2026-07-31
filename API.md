@@ -332,7 +332,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 
 **Response**
 
-- 旧版探针（未携带 `X-Agent-Config-Schema: 3`）：返回 `200 OK`：
+- 旧版探针（未携带 `X-Agent-Config-Schema: 4`）：返回 `200 OK`：
   ```
   OK
   ```
@@ -341,7 +341,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 - 新版探针且配置 MD5 不一致，或仍有待确认流量修正：返回 `200 OK`，响应头携带当前
   `X-Agent-Config-Schema` 与 `X-Agent-Config-Md5`，响应体以固定顺序的完整 QueryParam 配置开头：
   ```text
-  collect_interval=0&report_interval=60&reset_day=1&schema_version=3&custom_ct=gd-ct-dualstack.ip.zstaticcdn.com&custom_cu=gd-cu-dualstack.ip.zstaticcdn.com&custom_cm=gd-cm-dualstack.ip.zstaticcdn.com&custom_bd=ip.zstaticcdn.com&interface=
+  collect_interval=0&report_interval=60&reset_day=1&schema_version=4&custom_ct=gd-ct-dualstack.ip.zstaticcdn.com&custom_cu=gd-cu-dualstack.ip.zstaticcdn.com&custom_cm=gd-cm-dualstack.ip.zstaticcdn.com&custom_bd=https://example.com/generate_204&interface=
   ```
   （`Content-Type: application/x-www-form-urlencoded; charset=utf-8`）
 - ~~动态配置包含 `traffic_calc_type`、`traffic_limit`、`auto_update` 等全部探针运行参数。~~ **2026-07-26 修订，2026-07-31 更新**：MD5 覆盖的规范配置仅包含 `collect_interval`、`report_interval`、`reset_day`、`schema_version`、`custom_ct`、`custom_cu`、`custom_cm`、`custom_bd`、`interface`。待应用的 `rx_correction`、`tx_correction` 会追加到响应体，但不参与配置 MD5；启用自动更新且版本不一致时追加 `update=1`。
@@ -362,7 +362,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 
 ## 2. 公开 API（前端/管理端共用）
 
-> ~~以下接口除 `/api/ws` 外，若 `site_options.is_public !== 'true'` 则必须携带 JWT。~~ **2026-07-26 修订**：`/api/servers`、`/api/server`、`/api/history/all` 在私有站点需要 JWT；`/api/config`、`/api/ws`、`/theme` 无论站点是否公开均可访问。
+> `/api/servers`、`/api/server`、`/api/history/all` 在私有站点需要 JWT；`/api/ws` 在本 Fork 中无论站点公开状态都必须携带有效 JWT。`/api/config` 与 `/theme` 仍可匿名访问，但不会返回私有服务器指标。
 > 命中 Turnstile 时需带 `X-Turnstile-Token` 或 `X-Turnstile-Verified`。
 
 ### 2.1 `GET /api/config` - 获取站点配置
@@ -676,6 +676,7 @@ Upgrade: websocket
 Connection: Upgrade
 Sec-WebSocket-Key: <base64>
 Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: cfsm, cfsm.jwt.<JWT>
 ```
 
 **推送策略**：
@@ -687,7 +688,7 @@ Sec-WebSocket-Version: 13
 
 > `subscribe=all` 默认不推送任何服务器更新。客户端应先调用 `/api/servers` 获取当前可见服务器列表，再通过 WebSocket 通道发送 `subscribe` 消息，使用 `servers[].id` 作为过滤列表。该过滤是客户端订阅范围控制，不是服务端鉴权。
 >
-> **安全提示**：`/api/ws` 本身不校验 JWT、站点公开状态或 `is_hidden`。知道服务器 ID 的客户端可以使用单 ID scope 订阅；如需服务端权限隔离，应先修改实现，不能把 `ids` 过滤当作鉴权。
+> **鉴权要求**：`/api/ws` 必须通过 `Sec-WebSocket-Protocol` 同时提供 `cfsm` 和 `cfsm.jwt.<JWT>`。Worker 在升级连接前校验 JWT，只向 Durable Object 转发已鉴权连接。浏览器客户端会自动使用登录后保存在本地的 JWT。
 
 **服务端 → 客户端消息**：
 

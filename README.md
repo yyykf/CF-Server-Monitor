@@ -4,7 +4,10 @@
 
 **演示地址**：<https://demo.huilang.me/>
 
-**当前Workers版本：V2.8.1 Beta2; Agent版本：1.3.6**
+**当前Workers版本：V2.8.1 Beta2; Agent版本：1.3.6-proxy1**
+
+> [!IMPORTANT]
+> 此 Fork 面向私有、自用监控：新站点默认私有，实时 WebSocket 强制 JWT 鉴权，`API_SECRET` 通过 Cloudflare Worker Secret 部署。Windows Agent 还支持通过本机 Clash/Mihomo HTTP 代理执行端到端 HTTPS 探测。部署与使用边界见 [PRIVATE_DEPLOYMENT.md](PRIVATE_DEPLOYMENT.md)。
 
 > [!IMPORTANT]
 > V2.7.10 加入了 CSP 内容安全策略。Workers 环境通过 HTTP Response Header 下发 CSP，默认只允许同源资源和必要的 Cloudflare/Google Fonts 资源；

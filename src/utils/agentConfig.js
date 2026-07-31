@@ -1,6 +1,6 @@
 import { md5Hash } from './common.js';
 
-export const AGENT_CONFIG_SCHEMA_VERSION = 3;
+export const AGENT_CONFIG_SCHEMA_VERSION = 4;
 export const AGENT_CONFIG_SCHEMA_HEADER = 'X-Agent-Config-Schema';
 export const AGENT_CONFIG_MD5_HEADER = 'X-Agent-Config-Md5';
 export const MAX_TRAFFIC_CORRECTION_GB = 1000000;
@@ -112,9 +112,32 @@ function isValidHostname(host) {
   });
 }
 
-export function validatePingNode(value) {
+function validateHttpsProbeUrl(raw) {
+  if (raw.length > 256) return { valid: false };
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
+      return { valid: false };
+    }
+    if (!isValidIpv4(url.hostname) && !isValidHostname(url.hostname)) {
+      return { valid: false };
+    }
+    if (url.port) {
+      const port = Number(url.port);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return { valid: false };
+    }
+    return { valid: true, value: url.toString() };
+  } catch (_) {
+    return { valid: false };
+  }
+}
+
+export function validatePingNode(value, options = {}) {
   const raw = String(value || '').trim();
   if (!raw) return { valid: true, value: '' };
+  if (options.allowHttpsUrl && raw.startsWith('https://')) {
+    return validateHttpsProbeUrl(raw);
+  }
   if (raw.length > 60 || raw.includes('://') || /[\s/@?#\\[\]]/.test(raw)) {
     return { valid: false };
   }
@@ -144,8 +167,8 @@ export function validatePingNode(value) {
   return { valid: false };
 }
 
-export function sanitizePingNode(value) {
-  const result = validatePingNode(value);
+export function sanitizePingNode(value, options = {}) {
+  const result = validatePingNode(value, options);
   return result.valid ? result.value : '';
 }
 
@@ -211,7 +234,10 @@ export function buildAgentConfig(server, settings = null) {
   const customCt = sanitizePingNode(server?.custom_ct || settings?.custom_ct || '');
   const customCu = sanitizePingNode(server?.custom_cu || settings?.custom_cu || '');
   const customCm = sanitizePingNode(server?.custom_cm || settings?.custom_cm || '');
-  const customBd = sanitizePingNode(server?.custom_bd || settings?.custom_bd || '');
+  const customBd = sanitizePingNode(
+    server?.custom_bd || settings?.custom_bd || '',
+    { allowHttpsUrl: true }
+  );
   const networkInterface = sanitizeNetworkInterfaces(server?.interface || '');
 
   return {
