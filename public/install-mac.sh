@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-AGENT_VERSION="1.3.6"
+AGENT_VERSION="1.3.6-proxy1"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -477,7 +477,7 @@ apply_remote_config() {
     case "$new_report" in 30|60|120|180) ;; *) log_warn_debug "Remote config rejected: invalid report_interval=${new_report:-}"; return 1 ;; esac
     case "$new_reset" in 0|[1-9]|1[0-9]|2[0-9]|30|31) ;; *) log_warn_debug "Remote config rejected: invalid reset_day=${new_reset:-}"; return 1 ;; esac
     case "$new_update" in ''|0|1) ;; *) log_warn_debug "Remote config rejected: invalid update=${new_update}"; return 1 ;; esac
-    if [ "$new_schema" != "3" ]; then
+    if [ "$new_schema" != "4" ]; then
         log_warn_debug "Remote config rejected: invalid schema_version=${new_schema:-}"
         return 1
     fi

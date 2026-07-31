@@ -807,7 +807,7 @@ const getPingNodeLabel = (field) => ({
 const getPingNodeValidation = (source) => {
   const values = {}
   for (const field of PING_NODE_FIELDS) {
-    const result = validatePingNode(source[field])
+    const result = validatePingNode(source[field], { allowHttpsUrl: field === 'custom_bd' })
     if (!result.valid) {
       return { valid: false, field }
     }

@@ -227,7 +227,7 @@ const pingNodeErrorMessage = computed(() => (
 const pingNodeErrors = computed(() => Object.fromEntries(
   PING_NODE_FIELDS.map(field => [
     field,
-    validatePingNode(editForm.value[field]).valid ? '' : pingNodeErrorMessage.value
+    validatePingNode(editForm.value[field], { allowHttpsUrl: field === 'custom_bd' }).valid ? '' : pingNodeErrorMessage.value
   ])
 ))
 

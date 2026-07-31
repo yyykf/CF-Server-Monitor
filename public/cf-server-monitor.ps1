@@ -35,7 +35,9 @@
 .PARAMETER CmNode
     自定义 CM 测试节点
 .PARAMETER BdNode
-    自定义 BD 测试节点
+    自定义代理链路测试目标；支持 HTTPS URL
+.PARAMETER ProxyUrl
+    可选的本地 HTTP 代理地址，用于让 BdNode HTTPS 探测经过 Mihomo/Clash
 .EXAMPLE
     .\cf-server-monitor.ps1 install -Id "xxx" -Secret "yyy" -Url "https://worker.example.com/update"
 .EXAMPLE
@@ -61,6 +63,7 @@ param(
     [string]$CuNode = "",
     [string]$CmNode = "",
     [string]$BdNode = "",
+    [string]$ProxyUrl = "",
     [string]$Interface = "",
     
     [switch]$STA
@@ -88,6 +91,7 @@ if (-not $STA -and $host.Runspace.ApartmentState -ne 'STA') {
     if ($CuNode) { $argList += " -CuNode `"$CuNode`"" }
     if ($CmNode) { $argList += " -CmNode `"$CmNode`"" }
     if ($BdNode) { $argList += " -BdNode `"$BdNode`"" }
+    if ($ProxyUrl) { $argList += " -ProxyUrl `"$ProxyUrl`"" }
     if ($Interface) { $argList += " -Interface `"$Interface`"" }
     Start-Process powershell.exe -ArgumentList $argList
     exit 0
@@ -98,7 +102,7 @@ $DebugPreference = "SilentlyContinue"
 $ErrorActionPreference = "Stop"
 
 $APP_NAME = "CF-Server-Monitor"
-$AGENT_VERSION = "1.3.6"
+$AGENT_VERSION = "1.3.6-proxy1"
 $TASK_NAME = "CFProbe"
 # 获取脚本所在目录
 if ($MyInvocation.MyCommand.Path) {
@@ -303,6 +307,23 @@ function Normalize-NetworkInterfaceList {
     return $normalized
 }
 
+function Normalize-LocalProxyUrl {
+    param([string]$Value, [switch]$Strict)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return "" }
+
+    $raw = $Value.Trim().Trim("'").Trim('"')
+    $valid = $raw -match '^http://(127\.0\.0\.1|localhost):([0-9]{1,5})$'
+    if ($valid) {
+        $port = [int]$Matches[2]
+        $valid = $port -ge 1 -and $port -le 65535
+    }
+    if (-not $valid) {
+        if ($Strict) { throw "ProxyUrl 仅允许 http://127.0.0.1:端口 或 http://localhost:端口" }
+        return ""
+    }
+    return $raw
+}
+
 function ConvertTo-PowerShellLiteral {
     param([string]$Value)
     return "'" + $Value.Replace("'", "''") + "'"
@@ -421,7 +442,7 @@ function ConvertFrom-AgentConfigResponse {
     if ([string]::IsNullOrEmpty($bodyText) -or [Text.Encoding]::UTF8.GetByteCount($bodyText) -gt 1024) {
         throw "动态配置响应长度无效"
     }
-    if ($bodyText -notmatch '^[A-Za-z0-9_=&.,:\-]+$') { throw "动态配置包含非法字符" }
+    if ($bodyText -notmatch '^[A-Za-z0-9_=&.,:/\-]+$') { throw "动态配置包含非法字符" }
 
     $allowedKeys = @(
         'collect_interval', 'report_interval', 'reset_day', 'schema_version',
@@ -480,7 +501,7 @@ function ConvertFrom-AgentConfigResponse {
     $schema = [int]$values['schema_version']
     if (@(0, 1, 2, 5, 10) -notcontains $collect) { throw "collect_interval 无效" }
     if (@(30, 60, 120, 180) -notcontains $report -or $report -lt $collect) { throw "report_interval 无效" }
-    if ($reset -lt 0 -or $reset -gt 31 -or $schema -ne 3) { throw "reset_day 或 schema_version 无效" }
+    if ($reset -lt 0 -or $reset -gt 31 -or $schema -ne 4) { throw "reset_day 或 schema_version 无效" }
     $networkInterface = Normalize-NetworkInterfaceList -Value $values['interface'] -Strict
 
     $result = @{
@@ -537,6 +558,7 @@ function Invoke-AsAdmin {
     if ($CuNode) { $argList += " -CuNode `"$CuNode`"" }
     if ($CmNode) { $argList += " -CmNode `"$CmNode`"" }
     if ($BdNode) { $argList += " -BdNode `"$BdNode`"" }
+    if ($ProxyUrl) { $argList += " -ProxyUrl `"$ProxyUrl`"" }
     if ($Interface) { $argList += " -Interface `"$Interface`"" }
     Start-Process powershell.exe -Verb RunAs -ArgumentList $argList -Wait
 }
@@ -832,8 +854,11 @@ function Get-TcpPing {
 
 
 function Get-Probe {
-    param([string]$TargetHost, [int]$Count = 4)
+    param([string]$TargetHost, [int]$Count = 4, [string]$ProxyUrl = "")
     if ([string]::IsNullOrWhiteSpace($TargetHost)) { return @{ rtt = $false; loss = $false } }
+    if ($TargetHost -match '^https://') {
+        return Get-HttpProbe -TargetUrl $TargetHost -ProxyUrl $ProxyUrl -Count $Count
+    }
     $target = Resolve-ProbeTarget -TargetHost $TargetHost -DefaultPort 443
     if (-not $target) { return @{ rtt = "null"; loss = "100" } }
     $TargetHost = $target.host
@@ -849,6 +874,44 @@ function Get-Probe {
     return @{ rtt = $rtt; loss = $loss }
 }
 
+function Get-HttpProbe {
+    param([string]$TargetUrl, [string]$ProxyUrl = "", [int]$Count = 4)
+    if ($TargetUrl -notmatch '^https://') { return @{ rtt = "null"; loss = "100" } }
+
+    $latencies = @()
+    for ($i = 0; $i -lt $Count; $i++) {
+        try {
+            $request = @{
+                Uri = $TargetUrl
+                Method = 'Get'
+                TimeoutSec = 8
+                UseBasicParsing = $true
+                ErrorAction = 'Stop'
+            }
+            if (-not [string]::IsNullOrWhiteSpace($ProxyUrl)) {
+                $request.Proxy = $ProxyUrl
+            }
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $response = Invoke-WebRequest @request
+            $sw.Stop()
+            $status = [int]$response.StatusCode
+            if ($status -ge 200 -and $status -lt 400) {
+                $latencies += [math]::Max(1, [int]$sw.ElapsedMilliseconds)
+            }
+        } catch {}
+    }
+
+    $ok = $latencies.Count
+    $rtt = if ($ok -gt 0) {
+        $sorted = @($latencies | Sort-Object)
+        $sorted[[math]::Floor($sorted.Count / 2)].ToString()
+    } else {
+        "null"
+    }
+    $loss = [math]::Floor(($Count - $ok) / $Count * 100).ToString()
+    return @{ rtt = $rtt; loss = $loss }
+}
+
 # ============================================================
 # 异步 Ping 检测（后台执行，结果写入临时文件）
 # ============================================================
@@ -859,11 +922,12 @@ function Start-PingBackgroundJob {
         [string]$CuNode,
         [string]$CmNode,
         [string]$BdNode,
+        [string]$ProxyUrl,
         [string]$TempFile
     )
 
     $jobScript = {
-        param($ct, $cu, $cm, $bd, $tempFile)
+        param($ct, $cu, $cm, $bd, $proxyUrl, $tempFile)
 
         function Resolve-ProbeTarget {
             param([string]$TargetHost, [int]$DefaultPort = 443)
@@ -900,8 +964,11 @@ function Start-PingBackgroundJob {
         }
 
         function Get-Probe {
-            param([string]$TargetHost, [int]$Count = 4)
+            param([string]$TargetHost, [int]$Count = 4, [string]$ProxyUrl = "")
             if ([string]::IsNullOrWhiteSpace($TargetHost)) { return @{ rtt = $false; loss = $false } }
+            if ($TargetHost -match '^https://') {
+                return Get-HttpProbe -TargetUrl $TargetHost -ProxyUrl $ProxyUrl -Count $Count
+            }
             $target = Resolve-ProbeTarget -TargetHost $TargetHost -DefaultPort 443
             if (-not $target) { return @{ rtt = "null"; loss = "100" } }
             $TargetHost = $target.host
@@ -917,10 +984,48 @@ function Start-PingBackgroundJob {
             return @{ rtt = $rtt; loss = $loss }
         }
 
+        function Get-HttpProbe {
+            param([string]$TargetUrl, [string]$ProxyUrl = "", [int]$Count = 4)
+            if ($TargetUrl -notmatch '^https://') { return @{ rtt = "null"; loss = "100" } }
+
+            $latencies = @()
+            for ($i = 0; $i -lt $Count; $i++) {
+                try {
+                    $request = @{
+                        Uri = $TargetUrl
+                        Method = 'Get'
+                        TimeoutSec = 8
+                        UseBasicParsing = $true
+                        ErrorAction = 'Stop'
+                    }
+                    if (-not [string]::IsNullOrWhiteSpace($ProxyUrl)) {
+                        $request.Proxy = $ProxyUrl
+                    }
+                    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                    $response = Invoke-WebRequest @request
+                    $sw.Stop()
+                    $status = [int]$response.StatusCode
+                    if ($status -ge 200 -and $status -lt 400) {
+                        $latencies += [math]::Max(1, [int]$sw.ElapsedMilliseconds)
+                    }
+                } catch {}
+            }
+
+            $ok = $latencies.Count
+            $rtt = if ($ok -gt 0) {
+                $sorted = @($latencies | Sort-Object)
+                $sorted[[math]::Floor($sorted.Count / 2)].ToString()
+            } else {
+                "null"
+            }
+            $loss = [math]::Floor(($Count - $ok) / $Count * 100).ToString()
+            return @{ rtt = $rtt; loss = $loss }
+        }
+
         $ctProbe = Get-Probe -TargetHost $ct
         $cuProbe = Get-Probe -TargetHost $cu
         $cmProbe = Get-Probe -TargetHost $cm
-        $bdProbe = Get-Probe -TargetHost $bd
+        $bdProbe = Get-Probe -TargetHost $bd -ProxyUrl $proxyUrl
 
         $result = @{
             ct_ping = $ctProbe.rtt; ct_loss = $ctProbe.loss
@@ -934,7 +1039,7 @@ function Start-PingBackgroundJob {
         [System.IO.File]::WriteAllText($tempFile, $json, [System.Text.Encoding]::UTF8)
     }
 
-    Start-Job -ScriptBlock $jobScript -ArgumentList $CtNode, $CuNode, $CmNode, $BdNode, $TempFile -Name "CFProbePingJob" | Out-Null
+    Start-Job -ScriptBlock $jobScript -ArgumentList $CtNode, $CuNode, $CmNode, $BdNode, $ProxyUrl, $TempFile -Name "CFProbePingJob" | Out-Null
 }
 
 function Read-PingResults {
@@ -1262,6 +1367,7 @@ function Start-TimerCollectLoop {
                 "0"
             }
             $newInterface = Normalize-NetworkInterfaceList -Value $Interface -Strict
+            $newProxyUrl = Normalize-LocalProxyUrl -Value $ProxyUrl -Strict
         } catch {
             Write-Log "错误: $($_.Exception.Message)" "ERROR"
             return
@@ -1279,6 +1385,7 @@ function Start-TimerCollectLoop {
             cu_node = if ($CuNode) { $CuNode } else { "" }
             cm_node = if ($CmNode) { $CmNode } else { "" }
             bd_node = if ($BdNode) { $BdNode } else { "" }
+            proxy_url = $newProxyUrl
             interface = $newInterface
         }
         Save-Config -Config $config
@@ -1305,6 +1412,7 @@ function Start-TimerCollectLoop {
     $cuNode = if ($CuNode) { $CuNode } else { Get-ConfigProperty $config 'cu_node' "" }
     $cmNode = if ($CmNode) { $CmNode } else { Get-ConfigProperty $config 'cm_node' "" }
     $bdNode = if ($BdNode) { $BdNode } else { Get-ConfigProperty $config 'bd_node' "" }
+    $proxyUrl = if ($ProxyUrl) { $ProxyUrl } else { Get-ConfigProperty $config 'proxy_url' "" }
     try {
         $networkInterface = if ($Interface) {
             Normalize-NetworkInterfaceList -Value $Interface -Strict
@@ -1329,6 +1437,12 @@ function Start-TimerCollectLoop {
     $cuNode = $cuNode.Trim()
     $cmNode = $cmNode.Trim()
     $bdNode = $bdNode.Trim()
+    try {
+        $proxyUrl = Normalize-LocalProxyUrl -Value $proxyUrl -Strict
+    } catch {
+        Write-Log "错误: $($_.Exception.Message)" "ERROR"
+        return
+    }
     $networkInterface = $networkInterface.Trim()
 
     if ($workerUrl -notmatch '^https?://') {
@@ -1373,6 +1487,7 @@ function Start-TimerCollectLoop {
     $script:cs_cuNode = $cuNode
     $script:cs_cmNode = $cmNode
     $script:cs_bdNode = $bdNode
+    $script:cs_proxyUrl = $proxyUrl
     $script:cs_interface = $networkInterface
     $script:cs_autoUpdate = $autoUpdate
 
@@ -1431,6 +1546,7 @@ function Start-TimerCollectLoop {
             $cuN = [string]$script:cs_cuNode
             $cmN = [string]$script:cs_cmNode
             $bdN = [string]$script:cs_bdNode
+            $proxy = [string]$script:cs_proxyUrl
             $nicNames = [string]$script:cs_interface
             $rDay = $script:cs_resetDay
             $rInterval = $script:cs_reportInterval
@@ -1454,7 +1570,7 @@ function Start-TimerCollectLoop {
                 $existingJob = Get-Job -Name "CFProbePingJob" -ErrorAction SilentlyContinue
                 if (-not $existingJob -or $existingJob.State -in @("Completed", "Failed", "Stopped")) {
                     Remove-PingBackgroundJob
-                    Start-PingBackgroundJob -CtNode $ctN -CuNode $cuN -CmNode $cmN -BdNode $bdN -TempFile $pFile
+                    Start-PingBackgroundJob -CtNode $ctN -CuNode $cuN -CmNode $cmN -BdNode $bdN -ProxyUrl $proxy -TempFile $pFile
                 }
             }
 
@@ -1669,7 +1785,7 @@ function Start-TimerCollectLoop {
                                         $newCuNode = if ($remoteConfig.ContainsKey('cu_node')) { $remoteConfig.cu_node } else { $config.cu_node }
                                         $newCmNode = if ($remoteConfig.ContainsKey('cm_node')) { $remoteConfig.cm_node } else { $config.cm_node }
                                         $newBdNode = if ($remoteConfig.ContainsKey('bd_node')) { $remoteConfig.bd_node } else { $config.bd_node }
-                                        Start-PingBackgroundJob -CtNode $newCtNode -CuNode $newCuNode -CmNode $newCmNode -BdNode $newBdNode -TempFile $pingTempFile
+                                        Start-PingBackgroundJob -CtNode $newCtNode -CuNode $newCuNode -CmNode $newCmNode -BdNode $newBdNode -ProxyUrl ([string]$script:cs_proxyUrl) -TempFile $pingTempFile
                                     }
                                 }
                             }
@@ -1764,6 +1880,9 @@ function Install-Service {
         } else {
             $existingAutoUpdate
         }
+        $proxyUrlValue = Normalize-LocalProxyUrl -Value $(
+            if ($ProxyUrl) { $ProxyUrl } else { Get-ConfigProperty $existingConfig 'proxy_url' "" }
+        ) -Strict
     } catch {
         Write-Host "错误: $($_.Exception.Message)" -ForegroundColor Red
         return
@@ -1782,6 +1901,7 @@ function Install-Service {
         cu_node = if ($CuNode) { $CuNode } else { Get-ConfigProperty $existingConfig 'cu_node' "" }
         cm_node = if ($CmNode) { $CmNode } else { Get-ConfigProperty $existingConfig 'cm_node' "" }
         bd_node = if ($BdNode) { $BdNode } else { Get-ConfigProperty $existingConfig 'bd_node' "" }
+        proxy_url = $proxyUrlValue
         interface = $interfaceValue
     }
 
@@ -1869,6 +1989,7 @@ function Install-Service {
     Write-Host "  统计网卡   : $(if ($config.interface) { $config.interface } else { '自动汇总' })"
     Write-Host "  流量重置日 : $($config.reset_day)号"
     Write-Host "  自动更新   : $($config.auto_update)"
+    Write-Host "  代理链路   : $(if ($config.proxy_url) { '启用' } else { '直连探测' })"
     Write-Host "  配置文件   : $CONFIG_FILE"
     Write-Host "  日志文件   : $LOG_FILE"
     Write-Host "  自动启动   : 已注册计划任务 $TASK_NAME"

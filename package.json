@@ -4,6 +4,7 @@
   "description": "Cloudflare Workers Server Monitor - 多服务器监控探针",
   "type": "module",
   "scripts": {
+    "test": "npm run test:agent-config && npm run test:history-query && npm run test:security",
     "dev": "wrangler dev",
     "deploy": "npm run build:frontend && wrangler deploy",
     "tail": "wrangler tail",
@@ -13,6 +14,7 @@
     "build:github-page": "node scripts/build-github-page.js",
     "test:agent-config": "node test/agent-config.js",
     "test:history-query": "node --test test/history-query.test.js",
+    "test:security": "node --test test/security.test.js",
     "preview": "vite preview"
   },
   "keywords": [
@@ -39,6 +41,6 @@
     "vue-router": "^4.4.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   }
 }

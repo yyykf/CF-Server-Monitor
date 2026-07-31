@@ -22,9 +22,32 @@ const isValidHostname = (host) => {
   })
 }
 
-export const validatePingNode = (value) => {
+const validateHttpsProbeUrl = (raw) => {
+  if (raw.length > 256) return { valid: false }
+  try {
+    const url = new URL(raw)
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
+      return { valid: false }
+    }
+    if (!isValidIpv4(url.hostname) && !isValidHostname(url.hostname)) {
+      return { valid: false }
+    }
+    if (url.port) {
+      const port = Number(url.port)
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return { valid: false }
+    }
+    return { valid: true, value: url.toString() }
+  } catch (_) {
+    return { valid: false }
+  }
+}
+
+export const validatePingNode = (value, options = {}) => {
   const raw = String(value || '').trim()
   if (!raw) return { valid: true, value: '' }
+  if (options.allowHttpsUrl && raw.startsWith('https://')) {
+    return validateHttpsProbeUrl(raw)
+  }
   if (raw.length > 60 || raw.includes('://') || /[\s/@?#\\[\]]/.test(raw)) {
     return { valid: false }
   }

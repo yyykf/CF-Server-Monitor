@@ -20,7 +20,7 @@ const server = {
   report_interval: 60,
   reset_day: 15
 };
-const expected = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=3&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=';
+const expected = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=4&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=';
 
 const config = buildAgentConfig(server);
 assert.equal(serializeAgentConfig(config), expected);
@@ -77,7 +77,7 @@ assert.deepEqual(buildAgentConfig({}), {
   custom_cm: '',
   custom_bd: '',
   interface: '',
-  schema_version: 3
+  schema_version: 4
 });
 
 // Test server-level ping node priority
@@ -106,5 +106,15 @@ assert.equal(buildAgentConfig({ custom_ct: '2001:db8::1' }).custom_ct, '');
 assert.deepEqual(validatePingNode('foo:443'), { valid: true, value: 'foo:443' });
 assert.equal(validatePingNode('foo:bar').valid, false);
 assert.equal(validatePingNode('2001:db8::1').valid, false);
+assert.deepEqual(
+  validatePingNode('https://example.com/generate_204', { allowHttpsUrl: true }),
+  { valid: true, value: 'https://example.com/generate_204' }
+);
+assert.equal(validatePingNode('https://example.com/generate_204').valid, false);
+assert.equal(validatePingNode('http://example.com/generate_204', { allowHttpsUrl: true }).valid, false);
+assert.equal(
+  buildAgentConfig({ custom_bd: 'https://example.com/generate_204' }).custom_bd,
+  'https://example.com/generate_204'
+);
 
 console.log('agent config tests passed');

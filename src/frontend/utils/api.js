@@ -117,8 +117,16 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0, serverI
 
   const connect = () => {
     manualClose = false
+    const token = localStorage.getItem('jwt_token') || ''
+    if (!token) {
+      setStatus(false, 'authentication required')
+      return
+    }
     try {
-      ws = new WebSocket(`${getWsBaseByIndex(apiIndex)}/api/ws?subscribe=${encodeURIComponent(scope)}`)
+      ws = new WebSocket(
+        `${getWsBaseByIndex(apiIndex)}/api/ws?subscribe=${encodeURIComponent(scope)}`,
+        ['cfsm', `cfsm.jwt.${token}`]
+      )
     } catch (e) {
       setStatus(false, 'WebSocket not supported')
       return

@@ -93,7 +93,7 @@ function normalizePingNodeFields(source, fields = PING_NODE_FIELDS) {
   const values = {};
   for (const field of fields) {
     if (source?.[field] === undefined) continue;
-    const result = validatePingNode(source?.[field]);
+    const result = validatePingNode(source?.[field], { allowHttpsUrl: field === 'custom_bd' });
     if (!result.valid) {
       return { valid: false, field };
     }

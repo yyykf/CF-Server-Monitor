@@ -10,7 +10,7 @@
 
 set -eu
 
-AGENT_VERSION="1.3.6"
+AGENT_VERSION="1.3.6-proxy1"
 
 # 路径定义（配置文件系统）
 CONFIG_DIR="/etc/config/cf-probe"
@@ -633,7 +633,7 @@ apply_remote_config() {
     case "$report" in 30|60|120|180) ;; *) log_warn_debug "Remote config rejected: invalid report_interval=${report:-}"; return 1 ;; esac
     case "$reset" in 0|[1-9]|1[0-9]|2[0-9]|30|31) ;; *) log_warn_debug "Remote config rejected: invalid reset_day=${reset:-}"; return 1 ;; esac
     case "$update" in ''|0|1) ;; *) log_warn_debug "Remote config rejected: invalid update=${update}"; return 1 ;; esac
-    if [ "$schema" != "3" ]; then
+    if [ "$schema" != "4" ]; then
         log_warn_debug "Remote config rejected: invalid schema_version=${schema:-}"
         return 1
     fi
